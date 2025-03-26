@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lottie to SVG Sprite Converter</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .drop-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .drop-area:hover {
+            background-color: #e9e9e9;
+        }
+        .drop-area.highlight {
+            border-color: #4CAF50;
+            background-color: #e8f5e9;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #preview {
+            margin-top: 20px;
+            text-align: center;
+        }
+        #result {
+            margin-top: 20px;
+            display: none;
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .progress-bar {
+            height: 20px;
+            background-color: #4CAF50;
+            border-radius: 4px;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .settings {
+            margin: 15px 0;
+        }
+        label {
+            display: block;
+            margin: 10px 0 5px;
+        }
+        input[type="number"] {
+            padding: 8px;
+            width: 80px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lottie to SVG Sprite Converter</h1>
+        <p>Upload a .lottie or .json file to convert it to an SVG sprite with all frames in a single row.</p>
+        
+        <div id="drop-area" class="drop-area">
+            <p>Drag & drop your .lottie or .json file here, or click to select</p>
+            <input type="file" id="fileInput" accept=".lottie,.json" style="display: none;">
+        </div>
+        
+        <div class="settings">
+            <label for="frameRate">Frame Rate (fps):</label>
+            <input type="number" id="frameRate" min="1" max="60" value="30">
+            
+            <label for="quality">Quality (1-10):</label>
+            <input type="number" id="quality" min="1" max="10" value="5">
+        </div>
+        
+        <button id="convertBtn" disabled>Convert to SVG Sprite</button>
+        
+        <div class="progress-container">
+            <div id="progressBar" class="progress-bar"></div>
+        </div>
+        
+        <div id="preview"></div>
+        
+        <div id="result">
+            <h3>Conversion Complete!</h3>
+            <p>SVG sprite with <span id="frameCount">0</span> frames</p>
+            <button id="downloadBtn">Download SVG</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropArea = document.getElementById('drop-area');
+            const fileInput = document.getElementById('fileInput');
+            const convertBtn = document.getElementById('convertBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            const preview = document.getElementById('preview');
+            const result = document.getElementById('result');
+            const progressBar = document.getElementById('progressBar');
+            const frameCount = document.getElementById('frameCount');
+            const frameRateInput = document.getElementById('frameRate');
+            const qualityInput = document.getElementById('quality');
+            
+            let animationData = null;
+            let svgSprite = null;
+            
+            // Handle drag and drop
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, highlight, false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, unhighlight, false);
+            });
+            
+            function highlight() {
+                dropArea.classList.add('highlight');
+            }
+            
+            function unhighlight() {
+                dropArea.classList.remove('highlight');
+            }
+            
+            dropArea.addEventListener('drop', handleDrop, false);
+            dropArea.addEventListener('click', () => fileInput.click());
+            
+            fileInput.addEventListener('change', function(e) {
+                if (e.target.files.length) {
+                    handleFile(e.target.files[0]);
+                }
+            });
+            
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const file = dt.files[0];
+                if (file) {
+                    handleFile(file);
+                }
+            }
+
+            function parseJsonLottieFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        try {
+                            resolve(JSON.parse(e.target.result));
+                        } catch (error) {
+                            reject(new Error('Invalid JSON file'));
+                        }
+                    };
+                    reader.onerror = () => reject(new Error('Error reading file'));
+                    reader.readAsText(file);
+                });
+            }
+            
+            function parseBinaryLottieFile(file) {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        try {
+                            // Decompress the binary data using pako (zlib)
+                            const compressed = new Uint8Array(e.target.result);
+                            const decompressed = pako.inflate(compressed);
+                            const jsonStr = new TextDecoder().decode(decompressed);
+                            resolve(JSON.parse(jsonStr));
+                        } catch (error) {
+                            reject(new Error('Invalid .lottie file (decompression failed)'));
+                        }
+                    };
+                    reader.onerror = () => reject(new Error('Error reading file'));
+                    reader.readAsArrayBuffer(file);
+                });
+            }
+
+            function previewAnimation() {
+                preview.innerHTML = '<h3>Preview:</h3>';
+                const animContainer = document.createElement('div');
+                animContainer.style.width = '200px';
+                animContainer.style.height = '200px';
+                animContainer.style.margin = '0 auto';
+                preview.appendChild(animContainer);
+                
+                const anim = lottie.loadAnimation({
+                    container: animContainer,
+                    renderer: 'svg',
+                    loop: true,
+                    autoplay: true,
+                    animationData: animationData
+                });
+            }
+            
+            // Improved handleFile function
+            async function handleFile(file) {
+                const fileName = file.name.toLowerCase();
+                if (!fileName.endsWith('.lottie') && !fileName.endsWith('.json')) {
+                    alert('Please upload a .lottie or .json file');
+                    return;
+                }
+                
+                try {
+                    if (fileName.endsWith('.lottie')) {
+                        animationData = await parseBinaryLottieFile(file);
+                    } else {
+                        animationData = await parseJsonLottieFile(file);
+                    }
+                    
+                    convertBtn.disabled = false;
+                    previewAnimation();
+                } catch (error) {
+                    alert('Error parsing the file: ' + error.message);
+                    console.error(error);
+                }
+            }
+
+            // Improved SVG conversion with color preservation
+            async function convertLottieToSvgSprite(animationData, frameRate, quality) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        const tempContainer = document.createElement('div');
+                        tempContainer.style.position = 'absolute';
+                        tempContainer.style.left = '-9999px';
+                        document.body.appendChild(tempContainer);
+                        
+                        const anim = lottie.loadAnimation({
+                            container: tempContainer,
+                            renderer: 'svg',
+                            loop: false,
+                            autoplay: false,
+                            animationData: animationData
+                        });
+                        
+                        anim.addEventListener('DOMLoaded', () => {
+                            try {
+                                const totalFrames = anim.totalFrames;
+                                const duration = anim.totalFrames / anim.frameRate;
+                                const targetFrameCount = Math.ceil(duration * frameRate);
+                                const frameStep = Math.max(1, Math.floor(totalFrames / targetFrameCount));
+                                
+                                const svgWidth = anim.renderer.svgElement.clientWidth;
+                                const svgHeight = anim.renderer.svgElement.clientHeight;
+                                
+                                const spriteSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                                spriteSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                                spriteSvg.setAttribute('width', svgWidth * targetFrameCount);
+                                spriteSvg.setAttribute('height', svgHeight);
+                                spriteSvg.setAttribute('viewBox', `0 0 ${svgWidth * targetFrameCount} ${svgHeight}`);
+                                
+                                // Add style element to preserve colors
+                                const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+                                style.textContent = `
+                                    svg { 
+                                        shape-rendering: geometricPrecision; 
+                                    }
+                                    path, rect, circle, ellipse, polygon {
+                                        vector-effect: non-scaling-stroke;
+                                    }
+                                `;
+                                spriteSvg.appendChild(style);
+                                
+                                let framesProcessed = 0;
+                                
+                                const processFrame = (frameIndex) => {
+                                    if (frameIndex >= totalFrames) {
+                                        anim.destroy();
+                                        document.body.removeChild(tempContainer);
+                                        
+                                        // Serialize and clean up SVG
+                                        const svgString = cleanUpSvg(spriteSvg);
+                                        
+                                        resolve({
+                                            svg: svgString,
+                                            frameCount: framesProcessed,
+                                            width: svgWidth,
+                                            height: svgHeight
+                                        });
+                                        return;
+                                    }
+                                    
+                                    anim.goToAndStop(frameIndex, true);
+                                    
+                                    // Clone and process the SVG frame
+                                    const frameSvg = anim.renderer.svgElement.cloneNode(true);
+                                    processSvgFrame(frameSvg);
+                                    
+                                    const frameGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                                    frameGroup.setAttribute('transform', `translate(${framesProcessed * svgWidth} 0)`);
+                                    
+                                    // Add all children with color preservation
+                                    Array.from(frameSvg.children).forEach(child => {
+                                        frameGroup.appendChild(child.cloneNode(true));
+                                    });
+                                    
+                                    spriteSvg.appendChild(frameGroup);
+                                    
+                                    framesProcessed++;
+                                    progressBar.style.width = `${Math.min(100, (frameIndex / totalFrames) * 100)}%`;
+                                    
+                                    setTimeout(() => {
+                                        processFrame(Math.min(frameIndex + frameStep, totalFrames));
+                                    }, 0);
+                                };
+                                
+                                processFrame(0);
+                            } catch (error) {
+                                anim.destroy();
+                                document.body.removeChild(tempContainer);
+                                reject(error);
+                            }
+                        });
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            }
+            
+            // Process SVG frame to preserve colors
+            function processSvgFrame(svgElement) {
+                // Inline styles to preserve colors
+                const elements = svgElement.querySelectorAll('*');
+                elements.forEach(el => {
+                    if (el.style) {
+                        const computedStyle = window.getComputedStyle(el);
+                        
+                        // Preserve fill if it's not none
+                        if (computedStyle.fill !== 'none') {
+                            el.setAttribute('fill', computedStyle.fill);
+                        }
+                        
+                        // Preserve stroke if it exists
+                        if (computedStyle.stroke !== 'none') {
+                            el.setAttribute('stroke', computedStyle.stroke);
+                            if (computedStyle.strokeWidth) {
+                                el.setAttribute('stroke-width', computedStyle.strokeWidth);
+                            }
+                        }
+                        
+                        // Preserve opacity
+                        if (computedStyle.opacity && computedStyle.opacity !== '1') {
+                            el.setAttribute('opacity', computedStyle.opacity);
+                        }
+                    }
+                });
+            }
+            
+            // Clean up SVG output
+            function cleanUpSvg(svgElement) {
+                // Clone to avoid modifying original
+                const svgClone = svgElement.cloneNode(true);
+                
+                // Remove unwanted attributes
+                const elements = svgClone.querySelectorAll('*');
+                elements.forEach(el => {
+                    el.removeAttribute('class');
+                    el.removeAttribute('style');
+                    el.removeAttribute('id');
+                });
+                
+                // Serialize
+                const serializer = new XMLSerializer();
+                let svgString = serializer.serializeToString(svgClone);
+                
+                // Add XML declaration and doctype
+                svgString = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+${svgString}`;
+                
+                return svgString;
+            }
+            
+            convertBtn.addEventListener('click', async function() {
+                if (!animationData) return;
+                
+                convertBtn.disabled = true;
+                progressBar.style.width = '0%';
+                
+                const frameRate = parseInt(frameRateInput.value) || 30;
+                const quality = parseInt(qualityInput.value) || 5;
+                
+                try {
+                    svgSprite = await convertLottieToSvgSprite(animationData, frameRate, quality);
+                    
+                    frameCount.textContent = svgSprite.frameCount;
+                    result.style.display = 'block';
+                    convertBtn.disabled = false;
+                } catch (error) {
+                    alert('Error during conversion: ' + error.message);
+                    console.error(error);
+                    convertBtn.disabled = false;
+                }
+            });
+            
+            downloadBtn.addEventListener('click', function() {
+                if (!svgSprite) return;
+                
+                const blob = new Blob([svgSprite.svg], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'animation-sprite.svg';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+            
+            async function convertLottieToSvgSprite(animationData, frameRate, quality) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        // Create a temporary container for the animation
+                        const tempContainer = document.createElement('div');
+                        tempContainer.style.position = 'absolute';
+                        tempContainer.style.left = '-9999px';
+                        document.body.appendChild(tempContainer);
+                        
+                        // Load the animation
+                        const anim = lottie.loadAnimation({
+                            container: tempContainer,
+                            renderer: 'svg',
+                            loop: false,
+                            autoplay: false,
+                            animationData: animationData
+                        });
+                        
+                        // Wait for animation to be ready
+                        anim.addEventListener('DOMLoaded', () => {
+                            try {
+                                const totalFrames = anim.totalFrames;
+                                const duration = anim.totalFrames / anim.frameRate;
+                                const targetFrameCount = Math.ceil(duration * frameRate);
+                                const frameStep = Math.max(1, Math.floor(totalFrames / targetFrameCount));
+                                
+                                const svgWidth = anim.renderer.svgElement.clientWidth;
+                                const svgHeight = anim.renderer.svgElement.clientHeight;
+                                
+                                // Create the sprite SVG
+                                const spriteSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                                spriteSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                                spriteSvg.setAttribute('width', svgWidth * targetFrameCount);
+                                spriteSvg.setAttribute('height', svgHeight);
+                                spriteSvg.setAttribute('viewBox', `0 0 ${svgWidth * targetFrameCount} ${svgHeight}`);
+                                
+                                let framesProcessed = 0;
+                                
+                                const processFrame = (frameIndex) => {
+                                    if (frameIndex >= totalFrames) {
+                                        // Clean up
+                                        anim.destroy();
+                                        document.body.removeChild(tempContainer);
+                                        
+                                        // Serialize the SVG
+                                        const serializer = new XMLSerializer();
+                                        const svgString = serializer.serializeToString(spriteSvg);
+                                        
+                                        resolve({
+                                            svg: svgString,
+                                            frameCount: framesProcessed,
+                                            width: svgWidth,
+                                            height: svgHeight
+                                        });
+                                        return;
+                                    }
+                                    
+                                    // Go to the specific frame
+                                    anim.goToAndStop(frameIndex, true);
+                                    
+                                    // Clone the SVG content
+                                    const frameSvg = anim.renderer.svgElement.cloneNode(true);
+                                    
+                                    // Create a group for this frame
+                                    const frameGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+                                    frameGroup.setAttribute('transform', `translate(${framesProcessed * svgWidth} 0)`);
+                                    
+                                    // Add all children from the original SVG to our group
+                                    while (frameSvg.firstChild) {
+                                        frameGroup.appendChild(frameSvg.firstChild);
+                                    }
+                                    
+                                    // Add the group to our sprite
+                                    spriteSvg.appendChild(frameGroup);
+                                    
+                                    framesProcessed++;
+                                    progressBar.style.width = `${Math.min(100, (frameIndex / totalFrames) * 100)}%`;
+                                    
+                                    // Process next frame with a small delay to prevent UI freeze
+                                    setTimeout(() => {
+                                        processFrame(Math.min(frameIndex + frameStep, totalFrames));
+                                    }, 0);
+                                };
+                                
+                                // Start processing frames
+                                processFrame(0);
+                            } catch (error) {
+                                anim.destroy();
+                                document.body.removeChild(tempContainer);
+                                reject(error);
+                            }
+                        });
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
