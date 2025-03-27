@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sprite Preview</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .controls {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+        }
+        input {
+            width: 80px;
+            padding: 5px;
+        }
+        button {
+            padding: 8px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .preview-container {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #spritePreview {
+            border: 1px solid #ccc;
+            background: #f9f9f9;
+        }
+        #spriteImage {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sprite Preview</h1>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label for="spriteFile">Sprite</label>
+            <input type="file" id="spriteFile" accept="image/*">
+        </div>
+        <div class="control-group">
+            <label for="frameWidth">Frame Width:</label>
+            <input type="number" id="frameWidth" value="64" min="1">
+            px
+        </div>
+        <div class="control-group">
+            <label for="frameHeight">Frame Height:</label>
+            <input type="number" id="frameHeight" value="64" min="1">
+            px
+        </div>
+        <div class="control-group">
+            <label for="frameRate">Frame Rate:</label>
+            <input type="number" id="frameRate" value="10" min="1" step="0.1">
+            fps
+        </div>
+        <div class="control-group">
+            <label for="frameCount">Frame Count:</label>
+            <input type="number" id="frameCount" value="10" min="1">
+        </div>
+        <button id="previewBtn">Preview Animation</button>
+        <button id="stopBtn">Stop</button>
+    </div>
+    
+    <div class="preview-container">
+        <canvas id="spritePreview"></canvas>
+        <img id="spriteImage" alt="Sprite Sheet">
+    </div>
+    
+    <script>
+        const spriteFile = document.getElementById('spriteFile');
+        const frameWidth = document.getElementById('frameWidth');
+        const frameHeight = document.getElementById('frameHeight');
+        const frameRate = document.getElementById('frameRate');
+        const frameCount = document.getElementById('frameCount');
+        const previewBtn = document.getElementById('previewBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const spritePreview = document.getElementById('spritePreview');
+        const spriteImage = document.getElementById('spriteImage');
+        
+        let ctx = spritePreview.getContext('2d');
+        let animationId = null;
+        let currentFrame = 0;
+        let lastTime = 0;
+        
+        // Load image when file is selected
+        spriteFile.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    spriteImage.src = event.target.result;
+                    spriteImage.onload = function() {
+                        updateCanvasSize();
+                        drawFrame(0);
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        // Update canvas size when frame dimensions change
+        frameWidth.addEventListener('input', updateCanvasSize);
+        frameHeight.addEventListener('input', updateCanvasSize);
+        
+        function updateCanvasSize() {
+            spritePreview.width = parseInt(frameWidth.value);
+            spritePreview.height = parseInt(frameHeight.value);
+            if (spriteImage.complete && spriteImage.naturalWidth > 0) {
+                drawFrame(0);
+            }
+        }
+        
+        // Draw a specific frame
+        function drawFrame(frameIndex) {
+            const fw = parseInt(frameWidth.value);
+            const fh = parseInt(frameHeight.value);
+            
+            ctx.clearRect(0, 0, spritePreview.width, spritePreview.height);
+            
+            if (spriteImage.complete && spriteImage.naturalWidth > 0) {
+                const cols = Math.floor(spriteImage.naturalWidth / fw);
+                const row = Math.floor(frameIndex / cols);
+                const col = frameIndex % cols;
+                
+                ctx.drawImage(
+                    spriteImage,
+                    col * fw,
+                    row * fh,
+                    fw,
+                    fh,
+                    0,
+                    0,
+                    fw,
+                    fh
+                );
+            }
+        }
+        
+        // Animation loop
+        function animate(timestamp) {
+            if (!lastTime) lastTime = timestamp;
+            const elapsed = timestamp - lastTime;
+            const fps = parseInt(frameRate.value);
+            const frameInterval = 1000 / fps;
+            
+            if (elapsed > frameInterval) {
+                currentFrame = (currentFrame + 1) % parseInt(frameCount.value);
+                drawFrame(currentFrame);
+                lastTime = timestamp - (elapsed % frameInterval);
+            }
+            
+            animationId = requestAnimationFrame(animate);
+        }
+        
+        // Start preview
+        previewBtn.addEventListener('click', function() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            if (spriteImage.complete && spriteImage.naturalWidth > 0) {
+                currentFrame = 0;
+                lastTime = 0;
+                animationId = requestAnimationFrame(animate);
+            } else {
+                alert('Please load a sprite sheet first');
+            }
+        });
+        
+        // Stop preview
+        stopBtn.addEventListener('click', function() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+            drawFrame(0);
+        });
+        
+        // Initialize
+        updateCanvasSize();
+    </script>
+</body>
+</html>
